@@ -3,6 +3,30 @@ import pandas as pd
 import yfinance as yf
 
 st.title("STARCK PORTFOLIO ANALYZER")
+
+TRADINGVIEW_MAP = {
+        "Symbol" : "Symbol",
+        "Side" : "Side",
+        "Quantity" : "Quantity",
+        "Avg fill price" : "Cost Basis",
+        "Last price" : "Last price",
+        "Unrealized PnL (value)" : "Unrealized PnL (value)",
+        "Unrealized PnL %" : "Unrealized PnL %",
+        "Trade value" : "Trade value",
+        "Market value" : "Market value",
+    }
+
+MERRILL_MAP = {
+        "Symbol" : "Symbol",
+        "Quantity" : "Quantity",
+        "Price ($)" : "Last Price",
+        "Unrealized Gain/Loss (%)" : "Unrealized PnL %",
+        "Value ($)" : "Market value",
+        "Unrealized Gain/Loss ($)" : "Unrealized PnL (value)",
+
+    }
+# Columns to drop any Broker
+COLUMNS_TO_DROP = ["Margin", "Leverage","Unrealized PnL (currency)", "COB Date"]
 # Prompting User for Uploading
 positions = st.file_uploader("Upload your positions(csv)", type=["csv"])
 if positions is not None:
@@ -10,65 +34,216 @@ if positions is not None:
     # Uploading CSV file
     df = pd.read_csv(positions)
 
-    # Organizing data frame
-    symbols_list = df["Symbol"].tolist()
-    clean_symbols_list = [s.split(":", 1)[1] if ":" in s else s for s in symbols_list]
-    df["Symbol"] = clean_symbols_list
-    df = df.sort_values(by=["Symbol"])
-    quantity_list = df["Quantity"].tolist()
-    quantity_list_int = [int(quantity) for quantity in quantity_list]
-    side_list = df["Side"].tolist()
-    trade_value_list = df["Trade value"].tolist()
-    trade_value_list_commas = [trade_value.replace(",","") for trade_value in trade_value_list]
-    trade_value_list_str = [trade_value.split(" ",1)[0] for trade_value in trade_value_list_commas]
-    trade_value_list_float = [float(trade_value) for trade_value in trade_value_list_str]
-    df["Trade value"] = trade_value_list_float
-
-    # Downloading current data
-    tickers = df["Symbol"].tolist()
-    data = yf.download(tickers, period="1d")
-    current_prices = data["Close"].iloc[-1]
-
-    # Removing unnecessary information
-    df_clean = df.dropna(axis=1)
-    df_clean.drop(columns=["Margin","Leverage","Unrealized PnL (currency)"], inplace=True)
-    df_clean.reset_index(drop=True, inplace=True)
-
-    # Creating dictionaries for updated data
-    prices_dict = {}
-    market_value_dict = {}
-    PnL_value_dict = {}
-    PnL_percent_dict = {}
-
-    # Updating data frame to current market structure iterating through each Asset
-    for ticker, qty, side in zip(tickers, quantity_list_int, side_list):
-        latest_close = data["Close"][ticker].iloc[-1]
-        prices_dict[ticker] = latest_close
-        market_value_dict[ticker] = latest_close * qty
-
-        ticker_index = tickers.index(ticker)
-        if side == "Long":
-            PnL_value_dict[ticker] = market_value_dict[ticker] - trade_value_list_float[ticker_index]
-            PnL_percent_dict[ticker] = (latest_close - df_clean["Avg fill price"][ticker_index]) / df_clean["Avg fill price"][ticker_index] * 100
+    # Prompt user to select which brokerage
+    choice = st.selectbox("Pick one", ["Select Brokerage...","TradingView", "Merrill"])
+    if choice == "Select Brokerage...":
+        st.write("Please select your brokerage...")
+    else:
+        if choice == "TradingView":
+            df= df.rename(columns = TRADINGVIEW_MAP)
         else:
-            PnL_value_dict[ticker] = trade_value_list_float[ticker_index] - market_value_dict[ticker]
-            PnL_percent_dict[ticker] = (df_clean["Avg fill price"][ticker_index] - latest_close) / df_clean["Avg fill price"][ticker_index] *100
+            df= df.rename(columns = MERRILL_MAP)
 
-    # Replacing old data for each Asset with new data
-    df_clean["Market value"] = df_clean["Symbol"].map(market_value_dict)
-    df_clean["Last price"]  = df_clean["Symbol"].map(prices_dict)
-    df_clean["Unrealized PnL (value)"] = df_clean["Symbol"].map(PnL_value_dict)
-    df_clean["Unrealized PnL %"] = df_clean["Symbol"].map(PnL_percent_dict)
+            #Format Cleaning
+            for col in ["Market value", "Unrealized PnL (value)", "Quantity"]:
+                if col in df.columns:
+                    df[col] = df[col].astype(str).str.strip()
+                    df[col] = df[col].str.replace(r'^\((.*)\)$', r'-\1', regex=True)  # Converts (42.12) to -42.12
+                    df[col] = df[col].str.replace(",", "").str.replace("$", "")
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
-    # Displaying Positions from csv file
-    st.subheader("Positions")
-    st.write(df_clean)
+            # Removing Unnecessary information Merrill
+            df = df[~df["Symbol"].str.contains(r"\--", na=False)]
+            df.drop(columns=["Last Price"], inplace=True)
+            df.drop(columns=["Cumulative Investment Return ($)"], inplace=True)
+            df.drop(columns=["Cumulative Investment Return (%)"], inplace=True)
+            df.drop(columns=["Accrued Interest ($)"], inplace=True)
+            df.drop(columns=["Security #"], inplace=True)
+            df.drop(columns=["CUSIP #"], inplace=True)
+            df.drop(columns=["Account Nickname"], inplace=True)
+            df.drop(columns=["Account Registration"], inplace=True)
+            df.drop(columns=["Account #"], inplace=True)
 
-    # Display of Statistics
-    st.subheader("Position Statistics")
-    described = df_clean.describe()
-    st.write(described)
+            #Fixing missed data
+            df["Trade value"] = df["Market value"] - df["Unrealized PnL (value)"]
+            df["Cost Basis"] = df.apply(lambda row: row["Trade value"] / row["Quantity"] if row["Quantity"] != 0 else 0, axis=1)
 
+        if "Side" not in df.columns:
+                df["Side"]= "Long"
+        cost_basis_col = "Cost Basis"
 
+        # Organizing data frame
+        symbols_list = df["Symbol"].tolist()
+        clean_symbols_list = [s.split(":", 1)[1] if ":" in s else s for s in symbols_list]
+        df["Symbol"] = clean_symbols_list
+        df = df.sort_values(by=["Symbol"])
+
+        df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0.0)
+        df["Cost Basis"] = pd.to_numeric(df["Cost Basis"], errors="coerce").fillna(0.0)
+
+        if "Trade value" not in df.columns:
+            df["Trade value"] = df["Quantity"] * df["Cost Basis"]
+
+        df["Trade value"] = pd.to_numeric(df["Trade value"].astype(str).str.replace(",","").str.split().str[0], errors="coerce").fillna(0.0)
+
+        # Downloading current data
+        unique_tickers = df["Symbol"].unique().tolist()
+        data = yf.download(unique_tickers, period="1d", group_by="ticker")
+
+        # Removing Columns no matter the Broker
+        df_clean = df.dropna(axis=1).copy()
+        existing_drop = [col for col in COLUMNS_TO_DROP if col in df_clean.columns]
+        df_clean.drop(columns=existing_drop, inplace=True)
+        df_clean.reset_index(drop=True, inplace=True)
+
+        # Creating rows for updated data
+        live_prices = []
+        live_market_values = []
+        live_pnl_values = []
+        live_pnl_percents = []
+
+        # Updating data frame to current market structure iterating through each Asset
+        for idx, row in df_clean.iterrows():
+            ticker = row["Symbol"]
+            qty = row["Quantity"]
+            side = row["Side"]
+            cost_basis = row[cost_basis_col]
+            trade_value = row["Trade value"]
+
+            try:
+                if len(unique_tickers) > 1:
+                    latest_close = data[ticker]["Close"].iloc[-1]
+                else:
+                    latest_close = data["Close"].iloc[0]
+            except Exception:
+                latest_close = cost_basis
+
+            market_val = latest_close * qty
+
+            if side == "Long":
+                pnl_val = market_val - trade_value
+                pnl_pct = ((latest_close - cost_basis) / cost_basis * 100) if cost_basis !=0 else 0
+            else:
+                pnl_val = trade_value - market_val
+                pnl_pct = ((cost_basis - latest_close) / cost_basis * 100) if cost_basis !=0 else 0
+
+            live_prices.append(latest_close)
+            live_market_values.append(market_val)
+            live_pnl_values.append(pnl_val)
+            live_pnl_percents.append(pnl_pct)
+
+        df_clean["Last price"] = live_prices
+        df_clean["Market value"] = live_market_values
+        df_clean["Unrealized PnL (value)"] = live_pnl_values
+        df_clean["Unrealized PnL %"] = live_pnl_percents
+
+        # Generating Analysis data
+        analysis_rows = []
+        for ticker in unique_tickers:
+            try:
+                tick_obj = yf.Ticker(ticker)
+                info = tick_obj.info
+
+                # Type of Asset
+                quote_type = info.get("quoteType","").upper()
+
+                # Current Price
+                current_price = info.get("currentPrice",info.get("regularMarketPrice","N/A"))
+
+                # Extract specific metrics
+                if quote_type == "ETF":
+                    analysis_rows.append({
+                        "Symbol": ticker,
+                        "Sector": "ETF (No Sector)",
+                        "Industry": info.get("fundFamily", "ETF Fund"),
+                        "PE Ratio (trailing)": "N/A (Fund)",
+                        "Current Price": f"${current_price}",
+                        "Analyst Target Mean (1yr)": "N/A (Fund)",
+                        "Potential Upside %": "N/A (Fund)",
+                        "Recommendation": "N/A (Fund)",
+                    })
+                else:
+                    analysis_rows.append({
+                        "Symbol": ticker,
+                        "Sector": info.get("sector", "N/A"),
+                        "Industry": info.get("industry", "N/A"),
+                        "PE Ratio (trailing)": info.get("trailingPE", "Unprofitable"),
+                        "Current Price": f"${current_price}",
+                        "Analyst Target Mean (1yr)": f"${info.get("targetMeanPrice", "N/A"):,.2f}",
+                        "Potential Upside %": f"{(info.get("targetMeanPrice") - current_price) / current_price * 100:.2f}%",
+                        "Recommendation": info.get("recommendationKey"),
+                    })
+            except Exception as e:
+                analysis_rows.append({
+                    "Symbol": ticker,
+                    "Sector": "Error",
+                    "Industry": "Error",
+                    "PE Ratio (trailing)": "Error",
+                    "Current Price": "Error",
+                    "Analyst Target Mean (1yr)": "Error",
+                    "Potential Upside %": "Error",
+                    "Recommendation": "Error",
+                })
+        # Build DataFrame
+        df_analysis = pd.DataFrame(analysis_rows)
+
+        # Indicating Gain/Loss with color
+        def color_negative_red(value):
+            color = "red" if value < 0 else "green"
+            return f'color: {color}'
+
+        # Save styler object
+        styled_df = df_clean.style.map(color_negative_red, subset=["Unrealized PnL (value)", "Unrealized PnL %"])
+        styled_df.format({
+            "Market value" : "${:,.2f}",
+            "Trade value": "${:,.2f}",
+            "Unrealized PnL (value)": "${:,.2f}",
+            "Cost Basis": "${:,.2f}",
+            "Last price": "${:,.2f}",
+            "Unrealized PnL %": "{:,.2f}%",
+            "Quantity": "{:,}",
+        })
+        # Display of Portfolio Summary
+        st.subheader("Portfolio Summary")
+
+        # Portfolio Metrics
+        total_market_value = df_clean["Market value"].sum()
+        total_trade_value = df_clean["Trade value"].sum()
+        total_pnl_value = df_clean["Unrealized PnL (value)"].sum()
+        total_pnl_percent = (total_pnl_value / total_trade_value) * 100 if total_trade_value != 0 else 0.0
+
+        # format Metrics
+        str_market_value = f"${total_market_value:,.2f}"
+        str_trade_value = f"${total_trade_value:,.2f}"
+        str_pnl_value = f"${total_pnl_value:,.2f}"
+        str_pnl_percent = f"{total_pnl_percent:,.2f} %"
+
+        # 3 different columns
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric(
+                label="Total Market Value",
+                value=str_market_value,
+            )
+        with col2:
+            st.metric(
+                label="Total Trade Value",
+                value=str_trade_value,
+            )
+        with col3:
+            st.metric(
+                label="Total Unrealized PnL",
+                value=str_pnl_value,
+                delta=str_pnl_percent
+            )
+
+        # Displaying Positions from csv file
+        st.subheader("Positions")
+        st.write(styled_df)
+
+        # Displaying Analysis of each stock
+        st.subheader("Stock Analysis")
+        st.write(df_analysis)
 else:
     st.write("Please upload your positions(csv)!")
