@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import plotly.express as px
 
 st.title("STARCK PORTFOLIO ANALYZER")
 
@@ -237,6 +238,28 @@ if positions is not None:
                 value=str_pnl_value,
                 delta=str_pnl_percent
             )
+
+        # Portfolio Beta
+        st.subheader("Portfolio Beta")
+
+
+        # Portfolio Weight %
+        fig = px.pie(
+            df_clean,
+            values = "Market value",
+            names = "Symbol",
+            title = "Portfolio Allocation"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Portfolio Sector %
+        sector_fig = px.pie(
+            df_analysis,
+            values = df_clean["Market value"] / total_market_value * 100,
+            names = "Sector",
+            title = "Portfolio Sector Allocation"
+        )
+        st.plotly_chart(sector_fig, use_container_width=True)
 
         # Displaying Positions from csv file
         st.subheader("Positions")
