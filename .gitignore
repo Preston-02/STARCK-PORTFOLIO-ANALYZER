@@ -1,0 +1,17 @@
+# Python Environment Tracking Files
+.venv/
+venv/
+ENV/
+env/
+*.pyc
+__pycache__/
+
+# PyCharm Configuration Directory
+.idea/
+
+# Streamlit Tracking Files
+.streamlit/
+
+# OS/System files
+.DS_Store
+Thumbs.db
