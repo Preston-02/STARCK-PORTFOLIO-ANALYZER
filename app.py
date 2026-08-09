@@ -13,21 +13,16 @@ st.title("STARCK PORTFOLIO ANALYZER")
 positions = st.file_uploader("Upload your positions(csv)", type=["csv"])
 if positions is not None:
 
-    # Uploading CSV file
-    df = pd.read_csv(positions)
-
     # Prompt user to select which brokerage
-    choice = st.selectbox("Pick one", ["Select Brokerage...","TradingView", "Merrill"])
+    choice = st.selectbox("Pick one", ["Select Brokerage...","TradingView", "Merrill Lynch", "Fidelity"])
     if choice == "Select Brokerage...":
         st.write("Please select your brokerage...")
     else:
 
-        # Clean data
-        df = clean_data(df, choice)
+        df = clean_data(positions, choice)
 
         # Downloading current data
         unique_tickers = df["Symbol"].unique().tolist()
-
         df_clean = fetch_live_market_data(df, unique_tickers, COLUMNS_TO_DROP)
         df_analysis = generate_fundamental_analysis(unique_tickers)
 
@@ -38,7 +33,7 @@ if positions is not None:
             "Trade value": "${:,.2f}",
             "Unrealized PnL (value)": "${:,.2f}",
             "Cost Basis": "${:,.2f}",
-            "Last price": "${:,.2f}",
+            "Last Price": "${:,.2f}",
             "Unrealized PnL %": "{:,.2f}%",
             "Quantity": "{:,}",
         })
@@ -59,7 +54,6 @@ if positions is not None:
 
         # 3 different columns
         col1, col2, col3 = st.columns(3)
-
         with col1:
             st.metric(
                 label="Total Market Value",
@@ -93,15 +87,12 @@ if positions is not None:
         beta_gauge_fig = portfolio_beta_gauge(portfolio_beta)
         st.plotly_chart(beta_gauge_fig, use_container_width=True)
 
-
-
         st.divider()
-
-
 
         # Display Charts
         fig = portfolio_charts_allocation(df_clean)
         st.plotly_chart(fig, use_container_width=True)
+
         sector_fig = sector_charts_allocation(df_analysis, df_clean, total_market_value)
         st.plotly_chart(sector_fig, use_container_width=True)
 

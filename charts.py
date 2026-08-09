@@ -1,5 +1,6 @@
 import plotly.express as px
 import plotly.graph_objects as go
+import pandas as pd
 
 def portfolio_charts_allocation(df_clean):
     # Portfolio Weight %
@@ -12,10 +13,13 @@ def portfolio_charts_allocation(df_clean):
     return fig
 
 def sector_charts_allocation(df_analysis, df_clean, total_market_value):
+    # Safely map market tickers
+    merged_temp = pd.merge(df_analysis, df_clean[["Symbol", "Market value"]], on="Symbol", how="left").fillna(0.0)
+
     # Portfolio Sector %
     sector_fig = px.pie(
-        df_analysis,
-        values=df_clean["Market value"] / total_market_value * 100,
+        merged_temp,
+        values=merged_temp["Market value"] / total_market_value * 100,
         names="Sector",
         title="Portfolio Sector Allocation"
     )
@@ -42,7 +46,7 @@ def portfolio_beta_gauge(portfolio_beta):
             "prefix": f"{portfolio_beta:.2f}" if (portfolio_beta < 0.0 or portfolio_beta > 3.0) else "",
         },
         domain={"x": [0, 1], "y": [0, 1]},
-        title={"text": "Portfolio Beta Gauge","font": {"size": 20, "weight": "bold"}},
+        title={"text": "Portfolio Beta Gauge","font": {"size": 20}},
         gauge={
             'axis': {'range': [0.0, 3.0], 'tickwidth': 1, 'tickcolor': "gray", 'dtick': 0.5},
             'bar': {'color': "#1E1E1E"},

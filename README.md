@@ -38,6 +38,7 @@ STARK currently supports:
 
 - Merrill Lynch
 - TradingView (paper trading)
+- Fidelity
 
 ## Libraries
 
@@ -81,7 +82,7 @@ To run STARCK locally, clone the repository and install the required dependencie
 git clone https://github.com/Preston-02/STARCK-PORTFOLIO-ANALYZER.git
 cd STARCK
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run app.py 
 ```
 
 ## Data Privacy
@@ -95,6 +96,7 @@ Users upload brokerage CSV files directly to the application. Users should avoid
 - Leverage postions may not be calculated correctly into metrics.
 - Some securities may not have beta which can skew portfolio beta calculation.
 - Market prices are updated when the application is refreshed or loaded.
+- Works with portfolios specifically with stocks and funds
 
 ## Future Improvements
 

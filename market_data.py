@@ -2,13 +2,19 @@ import pandas as pd
 import yfinance as yf
 
 def fetch_live_market_data(df, unique_tickers, COLUMNS_TO_DROP):
+
+    if df.empty or not unique_tickers:
+        return df
+
     cost_basis_col = "Cost Basis"
     data = yf.download(unique_tickers, period="1d", group_by="ticker")
 
     # Removing Columns despite the Broker
     df_clean = df.dropna(axis=1).copy()
     existing_drop = [col for col in COLUMNS_TO_DROP if col in df_clean.columns]
-    df_clean.drop(columns=existing_drop, inplace=True)
+    df_clean.drop(columns=existing_drop, inplace=True, errors = "ignore")
+    live_prices = []
+    live_market_values = []
     df_clean.reset_index(drop=True, inplace=True)
 
     # Creating rows for updated data
@@ -47,7 +53,7 @@ def fetch_live_market_data(df, unique_tickers, COLUMNS_TO_DROP):
         live_pnl_values.append(pnl_val)
         live_pnl_percents.append(pnl_pct)
 
-    df_clean["Last price"] = live_prices
+    df_clean["Last Price"] = live_prices
     df_clean["Market value"] = live_market_values
     df_clean["Unrealized PnL (value)"] = live_pnl_values
     df_clean["Unrealized PnL %"] = live_pnl_percents
@@ -69,7 +75,7 @@ def generate_fundamental_analysis(unique_tickers):
             current_price = info.get("currentPrice", info.get("regularMarketPrice", "N/A"))
 
             # Extract specific metrics
-            if quote_type == "ETF":
+            if quote_type in ["ETF", "MUTUALFUND"]:
                 analysis_rows.append({
                     "Symbol": ticker,
                     "Sector": "ETF (No Sector)",
