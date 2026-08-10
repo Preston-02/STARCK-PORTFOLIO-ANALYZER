@@ -19,7 +19,7 @@ MERRILL_MAP = {
     "Unrealized Gain/Loss ($)" : "Unrealized PnL (value)",
 }
 
-Fidelity_MAP = {
+FIDELITY_MAP = {
     "Symbol": "Symbol",
     "Quantity": "Quantity",
     "Cost Basis Per Share": "Cost Basis",
@@ -29,6 +29,16 @@ Fidelity_MAP = {
     "Cost Basis": "Trade value",
     "Current Value": "Market value",
 
+}
+
+SCHWAB_MAP = {
+    "Symbol": "Symbol",
+    "Qty (Quantity)": "Quantity",
+    "Price ($)": "Last Price",
+    "Cost Basis": "Trade value",
+    "Mkt Val (Market Value)": "Market value",
+    "Gain $ (Gain/Loss $)": "Unrealized PnL (value)",
+    "Gain % (Gain/Loss %)": "Unrealized PnL %",
 }
 # Columns to drop any Broker
 COLUMNS_TO_DROP = ["Margin", "Leverage","Unrealized PnL (currency)", "COB Date"]

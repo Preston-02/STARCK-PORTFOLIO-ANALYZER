@@ -14,7 +14,7 @@ positions = st.file_uploader("Upload your positions(csv)", type=["csv"])
 if positions is not None:
 
     # Prompt user to select which brokerage
-    choice = st.selectbox("Pick one", ["Select Brokerage...","TradingView", "Merrill Lynch", "Fidelity"])
+    choice = st.selectbox("Pick one", ["Select Brokerage...","TradingView", "Merrill Lynch", "Fidelity", "Charles Schwab"])
     if choice == "Select Brokerage...":
         st.write("Please select your brokerage...")
     else:

@@ -39,6 +39,7 @@ STARK currently supports:
 - Merrill Lynch
 - TradingView (paper trading)
 - Fidelity
+- Charles Schwab
 
 ## Libraries
 
