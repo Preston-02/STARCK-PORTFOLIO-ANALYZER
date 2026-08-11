@@ -7,7 +7,7 @@ def fetch_live_market_data(df, unique_tickers, COLUMNS_TO_DROP):
         return df
 
     cost_basis_col = "Cost Basis"
-    data = yf.download(unique_tickers, period="1d", group_by="ticker")
+    data = yf.download(unique_tickers, period="5d", group_by="ticker")
 
     # Removing Columns despite the Broker
     df_clean = df.dropna(axis=1).copy()
@@ -33,9 +33,13 @@ def fetch_live_market_data(df, unique_tickers, COLUMNS_TO_DROP):
 
         try:
             if len(unique_tickers) > 1:
-                latest_close = data[ticker]["Close"].iloc[-1]
+                # Forward-fill/backward-fill missing daytime data for mutual funds
+                latest_close = data[ticker]["Close"].ffill().bfill().iloc[-1]
             else:
-                latest_close = data["Close"].iloc[0]
+                latest_close = data["Close"].ffill().bfill().iloc[-1]
+
+            if pd.isna(latest_close):
+                latest_close = cost_basis
         except Exception:
             latest_close = cost_basis
 
@@ -72,13 +76,13 @@ def generate_fundamental_analysis(unique_tickers):
             quote_type = info.get("quoteType", "").upper()
 
             # Current Price
-            current_price = info.get("currentPrice", info.get("regularMarketPrice", "N/A"))
+            current_price = info.get("currentPrice", info.get("regularMarketPrice", info.get("navPrice", info.get("previousClose", "N/A"))))
 
             # Extract specific metrics
             if quote_type in ["ETF", "MUTUALFUND"]:
                 analysis_rows.append({
                     "Symbol": ticker,
-                    "Sector": "ETF (No Sector)",
+                    "Sector": "Fund (No Sector)",
                     "Industry": info.get("fundFamily", "ETF Fund"),
                     "PE Ratio (trailing)": "N/A (Fund)",
                     "Current Price": f"${current_price}",
