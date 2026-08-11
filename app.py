@@ -7,7 +7,29 @@ from data_cleaning import clean_data
 from market_data import fetch_live_market_data, generate_fundamental_analysis
 from portfolio_utils import COLUMNS_TO_DROP, color_negative_red
 
-st.title("STARCK PORTFOLIO ANALYZER")
+st.set_page_config(
+    page_title="STARCK",
+    page_icon="assets/starck_logo.png",
+    layout= "wide"
+)
+
+st.markdown(
+    """
+    <style>
+    [data-testid="stFileUploaderDropzone"] button {
+        font-size: 24px;
+        height: 80px; 
+        width: 250px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.image("assets/starck_logo.png", width=250)
+
+st.title("STARCK-Portfolio Analyzer")
+
 
 # Prompting User for Uploading
 positions = st.file_uploader("Upload your positions(csv)", type=["csv"])
@@ -106,4 +128,4 @@ if positions is not None:
         st.subheader("Stock Analysis")
         st.write(df_analysis)
 else:
-    st.write("Please upload your positions(csv)!")
+    st.write("Positions CSV file not uploaded!")

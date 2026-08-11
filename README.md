@@ -53,6 +53,8 @@ STARK currently supports:
 
 ```text
 ├── app.py              # Main Streamlit application
+├── assets/             # Static visual elements
+│   └── logo.png        # Project logo image file
 ├── charts.py           # Data visualization
 ├── data_cleaning.py    # Cleaning data frames
 ├── market_data.py      # API fetching and financial market data
