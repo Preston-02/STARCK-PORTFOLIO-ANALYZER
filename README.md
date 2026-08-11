@@ -53,13 +53,39 @@ STARK currently supports:
 
 ```text
 ├── app.py              # Main Streamlit application
+├── screenshots/             # Sample Screenshots
+│   └── upload_page.png        # Upload page
+│   └── top_metrics.png        # Portfolio Metrics page
+│   └── pie_charts.png        # Pie Charts page
+│   └── positions_and_analysis.png        # Postions and analysis page
+├── sample_data/             # Sample Data
+│   └── fidelity_sample.csv        # Fidelity Sample
 ├── assets/             # Static visual elements
-│   └── logo.png        # Project logo image file
+│   └── starck_logo.png        # Project logo image file
 ├── charts.py           # Data visualization
 ├── data_cleaning.py    # Cleaning data frames
 ├── market_data.py      # API fetching and financial market data
 └── portfolio_utils.py  # Brokerage mapping and portfolio formatting
 ```
+
+## Screenshots
+
+### Upload Page
+![STARCK Upload Page](screenshots/upload_page.png)
+
+### Portfolio Metrics Page
+![STARCK Portfolio Metrics Page](screenshots/top_metrics.png)
+
+### Pie Charts Page
+![STARCK Pie Charts Page](screenshots/pie_charts.png)
+
+### Positions and Analysis Page
+![STARCK Positions and Analysis Page](screenshots/positions_and_analysis.png)
+
+## Demo Data
+
+Here is a fictional Fidelity portfolio csv for users to interact with through STARCK
+[Download the sample Fidelity portfolio](sample_data/fidelity_sample.csv)
 
 ## How it works
 
