@@ -40,8 +40,29 @@ if positions is not None:
     if choice == "Select Brokerage...":
         st.write("Please select your brokerage...")
     else:
+        try:
+            df = clean_data(positions, choice)
 
-        df = clean_data(positions, choice)
+            # Validate that the cleaned dataframe has the required columns
+            expected_columns = ["Symbol", "Market value", "Trade value", "Unrealized PnL (value)"]
+            missing_cols = [col for col in expected_columns if col not in df.columns]
+
+            if missing_cols:
+                st.error(f"Invalid file format. The uploaded CSV is not a valid {choice} portfolio.")
+                st.stop()
+
+            # Prevent empty dataframes from breaking functions
+            if df.empty:
+                st.error("The uploaded CSV contains no valid portfolio positions.")
+                st.stop()
+
+        except ValueError as e:
+            st.error(str(e))
+            st.stop()
+        except Exception as e:
+            # Catch generic Pandas parsing errors
+            st.error(f"Could not read this file. Please ensure it is a valid {choice} CSV export.")
+            st.stop()
 
         # Downloading current data
         unique_tickers = df["Symbol"].unique().tolist()
