@@ -2,9 +2,18 @@ import streamlit as st
 import pandas as pd
 
 # Import Python Files
-from charts import portfolio_charts_allocation, sector_charts_allocation, portfolio_beta_gauge
+from charts import (
+    portfolio_charts_allocation,
+    sector_charts_allocation,
+    portfolio_beta_gauge,
+    portfolio_vs_sp500_chart
+)
 from data_cleaning import clean_data
-from market_data import fetch_live_market_data, generate_fundamental_analysis
+from market_data import (
+    fetch_live_market_data,
+    generate_fundamental_analysis,
+    fetch_historical_performance
+)
 from portfolio_utils import COLUMNS_TO_DROP, color_negative_red
 
 st.set_page_config(
@@ -112,6 +121,48 @@ if positions is not None:
                 label="Total Unrealized PnL",
                 value=str_pnl_value,
                 delta=str_pnl_percent
+            )
+
+        st.divider()
+
+        # Portfolio Performance vs. S&P 500
+        st.subheader("Portfolio Performance")
+
+        performance_period = st.selectbox(
+            "Performance Period",
+            ["1 Year", "3 Years", "5 Years"]
+        )
+
+        period_map = {
+            "1 Year": "1y",
+            "3 Years": "3y",
+            "5 Years": "5y"
+        }
+
+        selected_period = period_map[performance_period]
+
+        df_performance = fetch_historical_performance(
+            df_clean,
+            period=selected_period
+        )
+
+        if not df_performance.empty:
+            performance_fig = portfolio_vs_sp500_chart(
+                df_performance
+            )
+
+            st.plotly_chart(
+                performance_fig,
+                use_container_width=True
+            )
+
+            st.caption(
+                "Hypothetical performance based on current portfolio weights. "
+                "This does not represent actual historical portfolio returns."
+            )
+        else:
+            st.warning(
+                "Historical performance data could not be calculated."
             )
 
         st.divider()

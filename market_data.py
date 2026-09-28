@@ -116,3 +116,99 @@ def generate_fundamental_analysis(unique_tickers):
                 "Beta": "Error",
             })
     return pd.DataFrame(analysis_rows)
+def fetch_historical_performance(df_clean, period="1y"):
+
+    if df_clean.empty:
+        return pd.DataFrame()
+
+    # Calculate total current portfolio value
+    total_market_value = df_clean["Market value"].sum()
+
+    if total_market_value <= 0:
+        return pd.DataFrame()
+
+    # Calculate current portfolio weights
+    df_weights = df_clean[["Symbol", "Market value"]].copy()
+
+    df_weights["Weight"] = (
+        df_weights["Market value"] / total_market_value
+    )
+
+    # Get unique tickers
+    tickers = df_weights["Symbol"].dropna().unique().tolist()
+
+    if not tickers:
+        return pd.DataFrame()
+
+    # Download historical prices
+    price_data = yf.download(
+        tickers,
+        period=period,
+        auto_adjust=True,
+        progress=False
+    )["Close"]
+
+    # Make sure price_data is always a DataFrame
+    if isinstance(price_data, pd.Series):
+        price_data = price_data.to_frame()
+
+    # Remove tickers that did not return historical data
+    valid_tickers = [
+        ticker for ticker in tickers
+        if ticker in price_data.columns
+    ]
+
+    if not valid_tickers:
+        return pd.DataFrame()
+
+    price_data = price_data[valid_tickers].ffill().bfill()
+
+    # Normalize each security to 100 at the beginning
+    normalized_prices = price_data / price_data.iloc[0] * 100
+
+    # Calculate weighted portfolio performance
+    portfolio_performance = pd.Series(
+        0.0,
+        index=normalized_prices.index
+    )
+
+    for ticker in valid_tickers:
+
+        weight = df_weights.loc[
+            df_weights["Symbol"] == ticker,
+            "Weight"
+        ].iloc[0]
+
+        portfolio_performance += (
+            normalized_prices[ticker] * weight
+        )
+
+    # Download S&P 500
+    sp500_data = yf.download(
+        "^GSPC",
+        period=period,
+        auto_adjust=True,
+        progress=False
+    )["Close"]
+
+    # Convert to Series if necessary
+    if isinstance(sp500_data, pd.DataFrame):
+        sp500_data = sp500_data.squeeze()
+
+    sp500_data = sp500_data.ffill().bfill()
+
+    # Normalize S&P 500 to 100
+    sp500_performance = (
+        sp500_data / sp500_data.iloc[0] * 100
+    )
+
+    # Put both series into one DataFrame
+    df_performance = pd.DataFrame({
+        "Date": portfolio_performance.index,
+        "Portfolio": portfolio_performance.values,
+        "S&P 500": sp500_performance.reindex(
+            portfolio_performance.index
+        ).values
+    })
+
+    return df_performance

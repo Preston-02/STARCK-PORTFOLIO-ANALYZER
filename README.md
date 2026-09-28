@@ -1,12 +1,12 @@
-# STARK
+# STARCK
 
-## Portfolio Analystics Dashboard
-STARK is a portfolio analytics dashboard built with Python and Streamlit. 
+## Portfolio Analytics Dashboard
+STARCK is a portfolio analytics dashboard built with Python and Streamlit. 
 It allows users to upload supported brokerage CSV files and analyze their portfolio using current market data, portfolio statistics, risk metrics, and visualizations.
 
 ## Features
 
-### Portfolio Analystics
+### Portfolio Analytics
 - Total market value
 - Total trade value
 - Unrealized P&L ($)
@@ -23,6 +23,13 @@ It allows users to upload supported brokerage CSV files and analyze their portfo
 - 1-year average price target
 - Potential upside (%)
 
+### Performance Analysis
+- Historical portfolio performance
+- Comparison with the S&P 500
+- 1-year, 3-year, and 5-year performance periods
+- Growth of $100 performance visualization
+- Hypothetical performance based on current portfolio weights
+
 ### Visualizations
 - Portfolio allocation pie chart
 - Sector allocation pie chart
@@ -30,11 +37,11 @@ It allows users to upload supported brokerage CSV files and analyze their portfo
 - Gain/loss formatting
 
 ### Market Data
-STARK retrieves the latest available market prices using Yahoo Finance when the application is loaded or refreshed. These prices are used to calculate the Unrealized P&L and current market value
+STARCK retrieves the latest available market prices using Yahoo Finance when the application is loaded or refreshed. These prices are used to calculate the Unrealized P&L and current market value
 
 ## Supported Brokerages
 
-STARK currently supports: 
+STARCK currently supports: 
 
 - Merrill Lynch
 - TradingView (paper trading)
@@ -56,8 +63,9 @@ STARK currently supports:
 ├── screenshots/             # Sample Screenshots
 │   └── upload_page.png        # Upload page
 │   └── top_metrics.png        # Portfolio Metrics page
+│   └── performance_chart.png        # Portfolio vs. S&P 500 page
 │   └── pie_charts.png        # Pie Charts page
-│   └── positions_and_analysis.png        # Postions and analysis page
+│   └── positions_and_analysis.png        # Positions and analysis page
 ├── sample_data/             # Sample Data
 │   └── fidelity_sample.csv        # Fidelity Sample
 ├── assets/             # Static visual elements
@@ -76,6 +84,9 @@ STARK currently supports:
 ### Portfolio Metrics Page
 ![STARCK Portfolio Metrics Page](screenshots/top_metrics.png)
 
+### Portfolio vs. S&P 500 Page
+![STARCK Portfolio vs. S&P 500 Page](screenshots/performance_chart.png)
+
 ### Pie Charts Page
 ![STARCK Pie Charts Page](screenshots/pie_charts.png)
 
@@ -91,11 +102,13 @@ Here is a fictional Fidelity portfolio csv for users to interact with through ST
 
 1. Upload a supported brokerage CSV file.
 2. STARCK identifies and cleans the raw brokerage data.
-3. Brokerage specific column names are mapped to a standard format with only necessary information.
-4. The application retreives the latest available market data using Yahoo Finance.
-5. Current market value and Unrealized P&L are calculated using the latest available prices.
-6. Portfolio statistics and stock analytics are displayed in the dashboard.
-7. Charts provide visualizations of portfolio allocation, sector allocation, and portfolio beta.
+3. Brokerage specific column names are mapped to a standardized format.
+4. The application retrieves the latest available market data using Yahoo Finance.
+5. Current market value and unrealized P&L are calculated using the latest available prices.
+6. Current portfolio weights are used to generate a hypothetical historical performance series.
+7. The hypothetical portfolio performance is compared with the S&P 500.
+8. Portfolio statistics and stock analytics are displayed in the dashboard.
+9. Charts provide visualizations of portfolio allocation, sector allocation, portfolio beta, and historical performance.
 
 ## Portfolio Beta
 
@@ -122,7 +135,7 @@ Users upload brokerage CSV files directly to the application. Users should avoid
 
 ## Known Limitations
 
-- Leverage postions may not be calculated correctly into metrics.
+- Leverage positions may not be calculated correctly into metrics.
 - Some securities may not have beta which can skew portfolio beta calculation.
 - Market prices are updated when the application is refreshed or loaded.
 - Works with portfolios specifically with stocks and funds
@@ -131,7 +144,6 @@ Users upload brokerage CSV files directly to the application. Users should avoid
 
 - Additional brokerage support
 - Improved ETF sector classification
-- S&P 500 performance comparison
 - Monte Carlo portfolio simulation
 - Additional risk metrics
 
