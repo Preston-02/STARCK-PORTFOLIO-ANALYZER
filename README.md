@@ -64,6 +64,7 @@ STARCK currently supports:
 │   └── upload_page.png        # Upload page
 │   └── top_metrics.png        # Portfolio Metrics page
 │   └── performance_chart.png        # Portfolio vs. S&P 500 page
+│   └── beta_gauge.png        # Portfolio Beta Page
 │   └── pie_charts.png        # Pie Charts page
 │   └── positions_and_analysis.png        # Positions and analysis page
 ├── sample_data/             # Sample Data
@@ -86,6 +87,9 @@ STARCK currently supports:
 
 ### Portfolio vs. S&P 500 Page
 ![STARCK Portfolio vs. S&P 500 Page](screenshots/performance_chart.png)
+
+### Portfolio Beta Page
+![STARCK Portfolio Beta Page](screenshots/beta_gauge.png)
 
 ### Pie Charts Page
 ![STARCK Pie Charts Page](screenshots/pie_charts.png)
