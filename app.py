@@ -81,7 +81,7 @@ def performance_section(df_clean):
 
         st.plotly_chart(
             performance_fig,
-            use_container_width=True
+            width="stretch"
         )
 
         st.caption(
@@ -201,16 +201,16 @@ if positions is not None:
 
         # Display Portfolio Beta
         beta_gauge_fig = portfolio_beta_gauge(portfolio_beta)
-        st.plotly_chart(beta_gauge_fig, use_container_width=True)
+        st.plotly_chart(beta_gauge_fig, width="stretch")
 
         st.divider()
 
         # Display Charts
         fig = portfolio_charts_allocation(df_clean)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         sector_fig = sector_charts_allocation(df_analysis, df_clean, total_market_value)
-        st.plotly_chart(sector_fig, use_container_width=True)
+        st.plotly_chart(sector_fig, width="stretch")
 
         st.divider()
 
@@ -220,6 +220,8 @@ if positions is not None:
 
         # Displaying Analysis of each stock
         st.subheader("Stock Analysis")
-        st.dataframe(df_analysis)
+        # Columns mixing numbers and text (e.g. P/E "Unprofitable") are shown as
+        # text so Streamlit's table converter doesn't error on them
+        st.dataframe(df_analysis.map(lambda v: "N/A" if v is None else str(v)))
 else:
     st.write("Positions CSV file not uploaded!")
