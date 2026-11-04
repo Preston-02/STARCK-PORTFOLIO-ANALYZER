@@ -55,6 +55,8 @@ STARCK currently supports:
 - Pandas
 - Plotly
 - yfinance
+- Twelve Data API (price history)
+- Alpha Vantage API (company fundamentals and analyst targets)
 
 ## Project Structure
 
@@ -74,6 +76,7 @@ STARCK currently supports:
 ├── charts.py           # Data visualization
 ├── data_cleaning.py    # Cleaning data frames
 ├── market_data.py      # API fetching and financial market data
+├── data_sources.py     # Twelve Data and Alpha Vantage API clients
 └── portfolio_utils.py  # Brokerage mapping and portfolio formatting
 ```
 
@@ -130,6 +133,31 @@ cd STARCK
 pip install -r requirements.txt
 streamlit run app.py 
 ```
+
+### Market data API keys (optional)
+
+STARCK uses Yahoo Finance by default. Yahoo often blocks requests from shared cloud
+servers such as Streamlit Community Cloud, so the deployed app also uses two free APIs:
+
+| Key | Used for | Free plan |
+|---|---|---|
+| `TWELVE_DATA_API_KEY` | Price history (performance chart, beta) | 800 credits/day, 8/minute |
+| `ALPHA_VANTAGE_API_KEY` | Sector, P/E, beta, analyst target and rating | 25 calls/day, 5/minute |
+
+Get free keys at [twelvedata.com](https://twelvedata.com) and
+[alphavantage.co](https://www.alphavantage.co/support/#api-key), then add them:
+
+- **Locally:** create `.streamlit/secrets.toml` (already git-ignored):
+
+  ```toml
+  TWELVE_DATA_API_KEY = "your-twelve-data-key"
+  ALPHA_VANTAGE_API_KEY = "your-alpha-vantage-key"
+  ```
+
+- **Streamlit Community Cloud:** app menu → **Settings** → **Secrets**, and paste the same two lines.
+
+Without keys, STARCK runs on Yahoo Finance alone. Alpha Vantage results are cached
+for 24 hours per ticker so the 25-call daily limit stretches across many uploads.
 
 ## Data Privacy
 

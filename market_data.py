@@ -5,10 +5,15 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+import data_sources as ds
+
 # How long downloaded market data is reused before Yahoo is hit again (seconds)
 LIVE_PRICE_TTL = 300        # 5 minutes
 FUNDAMENTALS_TTL = 3600     # 1 hour
 HISTORY_TTL = 3600          # 1 hour
+ALPHA_VANTAGE_TTL = 86400   # 24 hours: the free plan only allows 25 calls a day
+
+PERIOD_DAYS = {"1y": 365, "3y": 365 * 3, "5y": 365 * 5}
 
 # yfinance logs every refused Yahoo request; keep the app logs readable
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
@@ -38,10 +43,19 @@ def _close_prices(data, tickers):
 def _download_latest_closes(tickers):
     data = yf.download(list(tickers), period="5d", progress=False, threads=True)
     close = _close_prices(data, list(tickers))
-    if close.empty:
-        return {}
-    # Forward/back-fill so mutual funds without intraday data still get a price
-    return close.ffill().bfill().iloc[-1].to_dict()
+    latest = {}
+    if not close.empty:
+        # Forward/back-fill so mutual funds without intraday data still get a price
+        latest = close.ffill().bfill().iloc[-1].dropna().to_dict()
+
+    # Anything Yahoo didn't return: last close from Twelve Data's (cached) history
+    missing = [t for t in tickers if t not in latest]
+    if missing and ds.has_twelve_data():
+        td = _td_history(tuple(sorted(tickers)))
+        for t in missing:
+            if t in td.columns and td[t].notna().any():
+                latest[t] = float(td[t].dropna().iloc[-1])
+    return latest
 
 
 def fetch_live_market_data(df, unique_tickers, COLUMNS_TO_DROP):
@@ -114,10 +128,16 @@ def _fetch_profile(ticker):
     return {}
 
 
+@st.cache_data(ttl=ALPHA_VANTAGE_TTL, show_spinner=False)
+def _fetch_alpha_vantage(ticker):
+    # Raises on a refusal, so failures are never cached
+    return ds.alpha_vantage_overview(ticker)
+
+
 def _computed_betas(tickers):
     # Beta from 1 year of daily returns vs. the S&P 500: cov(stock, market) / var(market).
     # Uses the same cached price download as the performance chart.
-    close = _download_history(tuple(sorted(tickers)), "1y")
+    close = _price_history(tuple(sorted(tickers)), "1y")
     if close.empty or "^GSPC" not in close.columns:
         return {}
     returns = close.ffill().pct_change(fill_method=None)
@@ -146,6 +166,7 @@ def generate_fundamental_analysis(unique_tickers):
 
     rows = []
     info_failures = 0
+    alpha_vantage_ok = ds.has_alpha_vantage()
     with st.spinner("Loading fundamentals..."):
         for ticker in tickers:
             info = {}
@@ -155,9 +176,22 @@ def generate_fundamental_analysis(unique_tickers):
                     info = _fetch_info(ticker)
                 except Exception:
                     info_failures += 1
+            # US mutual fund tickers are 5 letters ending in X (FXAIX, VFIAX)
+            looks_like_fund = len(ticker) == 5 and ticker.upper().endswith("X")
+            # Yahoo blocked: use Alpha Vantage's company overview instead
+            # (it doesn't cover funds, so don't spend a daily call on one)
+            if not info and alpha_vantage_ok and not looks_like_fund:
+                try:
+                    info = _fetch_alpha_vantage(ticker)
+                except ds.RateLimited:
+                    alpha_vantage_ok = False   # out of calls; don't keep asking
+                except Exception:
+                    pass                       # e.g. funds, which it doesn't cover
             profile = {} if info.get("sector") else _fetch_profile(ticker)
 
             quote_type = (info.get("quoteType") or profile.get("quoteType") or "").upper()
+            if not quote_type and looks_like_fund:
+                quote_type = "MUTUALFUND"
             current_price = (
                 _num(info.get("currentPrice"))
                 or _num(info.get("regularMarketPrice"))
@@ -207,10 +241,43 @@ def generate_fundamental_analysis(unique_tickers):
 
 @st.cache_data(ttl=HISTORY_TTL, show_spinner="Loading price history...")
 def _download_history(tickers, period):
-    # Portfolio tickers and the S&P 500 in a single request
+    # Portfolio tickers and the S&P 500 in a single Yahoo request
     all_tickers = list(tickers) + ["^GSPC"]
     data = yf.download(all_tickers, period=period, auto_adjust=True, progress=False, threads=True)
     return _close_prices(data, all_tickers)
+
+
+@st.cache_data(ttl=HISTORY_TTL, show_spinner="Loading price history from Twelve Data...")
+def _td_history(tickers):
+    # 5 years in one go; the 1y/3y views are sliced from it, so switching periods
+    # costs no extra credits
+    return ds.twelve_data_history(list(tickers) + ["^GSPC"])
+
+
+def _price_history(tickers, period):
+    """Close prices for the tickers plus ^GSPC: Twelve Data when a key is set,
+    Yahoo for anything it couldn't supply (or for everything without a key)."""
+    tickers = tuple(tickers)
+    if not ds.has_twelve_data():
+        return _download_history(tickers, period)
+
+    close = _td_history(tickers)
+    if not close.empty:
+        start = close.index.max() - pd.Timedelta(days=PERIOD_DAYS.get(period, 365))
+        close = close[close.index >= start]
+
+    missing = [t for t in tickers if t not in close.columns]
+    if close.empty or missing or "^GSPC" not in close.columns:
+        yahoo = _download_history(tuple(missing) if not close.empty else tickers, period)
+        if close.empty:
+            return yahoo
+        if not yahoo.empty:
+            yahoo.index = pd.to_datetime(yahoo.index)
+            if yahoo.index.tz is not None:
+                yahoo.index = yahoo.index.tz_localize(None)
+            extra = [c for c in yahoo.columns if c not in close.columns]
+            close = close.join(yahoo[extra], how="left")
+    return close
 
 
 def fetch_historical_performance(df_clean, period="1y"):
@@ -231,7 +298,7 @@ def fetch_historical_performance(df_clean, period="1y"):
     if not tickers:
         return pd.DataFrame()
 
-    close = _download_history(tuple(tickers), period)
+    close = _price_history(tuple(tickers), period)
     if close.empty or "^GSPC" not in close.columns:
         return pd.DataFrame()
 
