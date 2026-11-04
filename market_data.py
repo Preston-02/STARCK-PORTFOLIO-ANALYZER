@@ -1,4 +1,4 @@
-import time
+import logging
 
 import numpy as np
 import pandas as pd
@@ -9,6 +9,9 @@ import yfinance as yf
 LIVE_PRICE_TTL = 300        # 5 minutes
 FUNDAMENTALS_TTL = 3600     # 1 hour
 HISTORY_TTL = 3600          # 1 hour
+
+# yfinance logs every refused Yahoo request; keep the app logs readable
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 
 def _close_prices(data, tickers):
@@ -83,95 +86,122 @@ def fetch_live_market_data(df, unique_tickers, COLUMNS_TO_DROP):
 
 @st.cache_data(ttl=FUNDAMENTALS_TTL, show_spinner=False)
 def _fetch_info(ticker):
-    # Cached per ticker. A failed lookup raises instead of returning, and
-    # Streamlit never caches an exception, so the next rerun tries again
-    # rather than showing "Error" for an hour.
-    last_error = None
-    for attempt in range(3):
-        try:
-            info = yf.Ticker(ticker).info
-            # Yahoo sometimes answers a throttled request with a near-empty dict
-            if info and info.get("quoteType"):
-                return info
-            last_error = ValueError(f"Empty info for {ticker}")
-        except Exception as e:
-            last_error = e
-        time.sleep(1.5 * (attempt + 1))
-    raise last_error
+    # Yahoo's .info endpoint needs a session "crumb", which Yahoo often refuses
+    # on shared cloud servers like Streamlit Cloud (HTTP 429 / 401 Invalid Crumb).
+    # One attempt only: retrying just adds to the rate limiting. A failure raises,
+    # and Streamlit never caches an exception, so a later rerun can try again.
+    info = yf.Ticker(ticker).info
+    if not info or not info.get("quoteType"):
+        raise ValueError(f"No info returned for {ticker}")
+    return info
 
 
-def _analyze_ticker(ticker):
+@st.cache_data(ttl=FUNDAMENTALS_TTL, show_spinner=False)
+def _fetch_profile(ticker):
+    # Sector / industry / asset type from Yahoo's search endpoint,
+    # which works without the crumb that .info needs
     try:
-        info = _fetch_info(ticker)
-
-        # Type of Asset
-        quote_type = (info.get("quoteType") or "").upper()
-
-        # Current Price
-        current_price = (
-            info.get("currentPrice")
-            or info.get("regularMarketPrice")
-            or info.get("navPrice")
-            or info.get("previousClose")
-        )
-        has_price = isinstance(current_price, (int, float)) and current_price != 0
-        price_str = f"${current_price:,.2f}" if has_price else "N/A"
-
-        if quote_type in ["ETF", "MUTUALFUND"]:
-            return {
-                "Symbol": ticker,
-                "Sector": "Fund (No Sector)",
-                "Industry": info.get("fundFamily", "ETF Fund"),
-                "PE Ratio (trailing)": "N/A (Fund)",
-                "Current Price": price_str,
-                "Analyst Target Mean (1yr)": "N/A (Fund)",
-                "Potential Upside %": "N/A (Fund)",
-                "Recommendation": "N/A (Fund)",
-                "Beta": info.get("beta3Year", "N/A"),
-            }
-
-        # Stocks with no analyst coverage used to crash into an "Error" row
-        target = info.get("targetMeanPrice")
-        if isinstance(target, (int, float)) and has_price:
-            target_str = f"${target:,.2f}"
-            upside_str = f"{(target - current_price) / current_price * 100:.2f}%"
-        else:
-            target_str = "N/A"
-            upside_str = "N/A"
-
-        return {
-            "Symbol": ticker,
-            "Sector": info.get("sector", "N/A"),
-            "Industry": info.get("industry", "N/A"),
-            "PE Ratio (trailing)": info.get("trailingPE", "Unprofitable"),
-            "Current Price": price_str,
-            "Analyst Target Mean (1yr)": target_str,
-            "Potential Upside %": upside_str,
-            "Recommendation": info.get("recommendationKey"),
-            "Beta": info.get("beta", "N/A"),
-        }
+        quotes = yf.Search(ticker, max_results=5, news_count=0).quotes
     except Exception:
-        return {
-            "Symbol": ticker,
-            "Sector": "Error",
-            "Industry": "Error",
-            "PE Ratio (trailing)": "Error",
-            "Current Price": "Error",
-            "Analyst Target Mean (1yr)": "Error",
-            "Potential Upside %": "Error",
-            "Recommendation": "Error",
-            "Beta": "Error",
-        }
+        return {}
+    for q in quotes:
+        if str(q.get("symbol", "")).upper() == ticker.upper():
+            return {
+                "quoteType": (q.get("quoteType") or "").upper(),
+                "sector": q.get("sectorDisp") or q.get("sector"),
+                "industry": q.get("industryDisp") or q.get("industry"),
+            }
+    return {}
+
+
+def _computed_betas(tickers):
+    # Beta from 1 year of daily returns vs. the S&P 500: cov(stock, market) / var(market).
+    # Uses the same cached price download as the performance chart.
+    close = _download_history(tuple(sorted(tickers)), "1y")
+    if close.empty or "^GSPC" not in close.columns:
+        return {}
+    returns = close.ffill().pct_change(fill_method=None)
+    market = returns["^GSPC"]
+    market_var = market.var()
+    betas = {}
+    for t in tickers:
+        if t in returns.columns and market_var:
+            pair = returns[[t, "^GSPC"]].dropna()
+            if len(pair) > 30:
+                betas[t] = round(pair[t].cov(pair["^GSPC"]) / pair["^GSPC"].var(), 2)
+    return betas
+
+
+def _num(value):
+    return value if isinstance(value, (int, float)) and not pd.isna(value) else None
 
 
 def generate_fundamental_analysis(unique_tickers):
     if not unique_tickers:
         return pd.DataFrame()
-    # One at a time on purpose: yfinance shares one Yahoo session, and parallel
-    # .info calls trip Yahoo's rate limit / session check. Each ticker is cached,
-    # so only the first load (or a new ticker) actually waits on Yahoo.
+
+    tickers = list(unique_tickers)
+    latest = _download_latest_closes(tuple(sorted(tickers)))
+    betas = _computed_betas(tickers)
+
+    rows = []
+    info_failures = 0
     with st.spinner("Loading fundamentals..."):
-        rows = [_analyze_ticker(t) for t in unique_tickers]
+        for ticker in tickers:
+            info = {}
+            # Stop asking for .info once Yahoo has refused it twice this run
+            if info_failures < 2:
+                try:
+                    info = _fetch_info(ticker)
+                except Exception:
+                    info_failures += 1
+            profile = {} if info.get("sector") else _fetch_profile(ticker)
+
+            quote_type = (info.get("quoteType") or profile.get("quoteType") or "").upper()
+            current_price = (
+                _num(info.get("currentPrice"))
+                or _num(info.get("regularMarketPrice"))
+                or _num(info.get("navPrice"))
+                or _num(latest.get(ticker))
+            )
+            price_str = f"${current_price:,.2f}" if current_price else "N/A"
+            yahoo_beta = _num(info.get("beta3Year" if quote_type in ["ETF", "MUTUALFUND"] else "beta"))
+            beta = yahoo_beta if yahoo_beta is not None else betas.get(ticker, "N/A")
+
+            if quote_type in ["ETF", "MUTUALFUND"]:
+                rows.append({
+                    "Symbol": ticker,
+                    "Sector": "Fund (No Sector)",
+                    "Industry": info.get("fundFamily") or "ETF Fund",
+                    "PE Ratio (trailing)": "N/A (Fund)",
+                    "Current Price": price_str,
+                    "Analyst Target Mean (1yr)": "N/A (Fund)",
+                    "Potential Upside %": "N/A (Fund)",
+                    "Recommendation": "N/A (Fund)",
+                    "Beta": beta,
+                })
+                continue
+
+            target = _num(info.get("targetMeanPrice"))
+            if target and current_price:
+                target_str = f"${target:,.2f}"
+                upside_str = f"{(target - current_price) / current_price * 100:.2f}%"
+            else:
+                target_str = upside_str = "N/A"
+
+            pe = _num(info.get("trailingPE"))
+            rows.append({
+                "Symbol": ticker,
+                "Sector": info.get("sector") or profile.get("sector") or "N/A",
+                "Industry": info.get("industry") or profile.get("industry") or "N/A",
+                "PE Ratio (trailing)": round(pe, 2) if pe else ("Unprofitable" if info else "N/A"),
+                "Current Price": price_str,
+                "Analyst Target Mean (1yr)": target_str,
+                "Potential Upside %": upside_str,
+                "Recommendation": info.get("recommendationKey") or "N/A",
+                "Beta": beta,
+            })
+
     return pd.DataFrame(rows)
 
 
