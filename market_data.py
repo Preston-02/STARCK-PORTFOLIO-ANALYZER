@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor
+import time
 
 import numpy as np
 import pandas as pd
@@ -81,9 +81,28 @@ def fetch_live_market_data(df, unique_tickers, COLUMNS_TO_DROP):
     return df_clean
 
 
+@st.cache_data(ttl=FUNDAMENTALS_TTL, show_spinner=False)
+def _fetch_info(ticker):
+    # Cached per ticker. A failed lookup raises instead of returning, and
+    # Streamlit never caches an exception, so the next rerun tries again
+    # rather than showing "Error" for an hour.
+    last_error = None
+    for attempt in range(3):
+        try:
+            info = yf.Ticker(ticker).info
+            # Yahoo sometimes answers a throttled request with a near-empty dict
+            if info and info.get("quoteType"):
+                return info
+            last_error = ValueError(f"Empty info for {ticker}")
+        except Exception as e:
+            last_error = e
+        time.sleep(1.5 * (attempt + 1))
+    raise last_error
+
+
 def _analyze_ticker(ticker):
     try:
-        info = yf.Ticker(ticker).info
+        info = _fetch_info(ticker)
 
         # Type of Asset
         quote_type = (info.get("quoteType") or "").upper()
@@ -145,22 +164,15 @@ def _analyze_ticker(ticker):
         }
 
 
-@st.cache_data(ttl=FUNDAMENTALS_TTL, show_spinner="Loading fundamentals...")
-def _fundamentals(tickers):
-    # One .info request per ticker, run in parallel instead of one after another
-    with ThreadPoolExecutor(max_workers=min(8, len(tickers))) as pool:
-        rows = list(pool.map(_analyze_ticker, tickers))
-    df = pd.DataFrame(rows)
-    # Mixed text/number columns make Streamlit's table conversion slow and noisy
-    for col in ["PE Ratio (trailing)", "Beta"]:
-        df[col] = df[col].astype(str)
-    return df
-
-
 def generate_fundamental_analysis(unique_tickers):
     if not unique_tickers:
         return pd.DataFrame()
-    return _fundamentals(tuple(unique_tickers))
+    # One at a time on purpose: yfinance shares one Yahoo session, and parallel
+    # .info calls trip Yahoo's rate limit / session check. Each ticker is cached,
+    # so only the first load (or a new ticker) actually waits on Yahoo.
+    with st.spinner("Loading fundamentals..."):
+        rows = [_analyze_ticker(t) for t in unique_tickers]
+    return pd.DataFrame(rows)
 
 
 @st.cache_data(ttl=HISTORY_TTL, show_spinner="Loading price history...")
