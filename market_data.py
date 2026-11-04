@@ -51,7 +51,9 @@ def _download_latest_closes(tickers):
     # Anything Yahoo didn't return: last close from Twelve Data's (cached) history
     missing = [t for t in tickers if t not in latest]
     if missing and ds.has_twelve_data():
-        td = _td_history(tuple(sorted(tickers)))
+        # Same request the price history makes when Yahoo is fully blocked, so it's
+        # one cached Twelve Data call instead of two
+        td = _td_history(tuple(sorted(set(missing) | {"^GSPC"})))
         for t in missing:
             if t in td.columns and td[t].notna().any():
                 latest[t] = float(td[t].dropna().iloc[-1])
@@ -248,36 +250,39 @@ def _download_history(tickers, period):
 
 
 @st.cache_data(ttl=HISTORY_TTL, show_spinner="Loading price history from Twelve Data...")
-def _td_history(tickers):
-    # 5 years in one go; the 1y/3y views are sliced from it, so switching periods
-    # costs no extra credits
-    return ds.twelve_data_history(list(tickers) + ["^GSPC"])
+def _td_history(symbols):
+    # Only the symbols Yahoo couldn't supply. 5 years in one go; the 1y/3y views
+    # are sliced from it, so switching periods costs no extra credits.
+    return ds.twelve_data_history(list(symbols))
 
 
 def _price_history(tickers, period):
-    """Close prices for the tickers plus ^GSPC: Twelve Data when a key is set,
-    Yahoo for anything it couldn't supply (or for everything without a key)."""
+    """Close prices for the tickers plus ^GSPC. Yahoo first (fast, and it works
+    on most home connections); Twelve Data only for whatever Yahoo didn't return."""
     tickers = tuple(tickers)
+    yahoo = _download_history(tickers, period)
     if not ds.has_twelve_data():
-        return _download_history(tickers, period)
+        return yahoo
 
-    close = _td_history(tickers)
-    if not close.empty:
-        start = close.index.max() - pd.Timedelta(days=PERIOD_DAYS.get(period, 365))
-        close = close[close.index >= start]
+    wanted = list(tickers) + ["^GSPC"]
+    missing = [t for t in wanted if t not in yahoo.columns or yahoo[t].isna().all()]
+    if not missing:
+        return yahoo
 
-    missing = [t for t in tickers if t not in close.columns]
-    if close.empty or missing or "^GSPC" not in close.columns:
-        yahoo = _download_history(tuple(missing) if not close.empty else tickers, period)
-        if close.empty:
-            return yahoo
-        if not yahoo.empty:
-            yahoo.index = pd.to_datetime(yahoo.index)
-            if yahoo.index.tz is not None:
-                yahoo.index = yahoo.index.tz_localize(None)
-            extra = [c for c in yahoo.columns if c not in close.columns]
-            close = close.join(yahoo[extra], how="left")
-    return close
+    td = _td_history(tuple(sorted(missing)))
+    if td.empty:
+        return yahoo
+    start = td.index.max() - pd.Timedelta(days=PERIOD_DAYS.get(period, 365))
+    td = td[td.index >= start]
+
+    if yahoo.empty:
+        return td
+    yahoo = yahoo.copy()
+    yahoo.index = pd.to_datetime(yahoo.index)
+    if yahoo.index.tz is not None:
+        yahoo.index = yahoo.index.tz_localize(None)
+    keep = [c for c in yahoo.columns if c not in td.columns]
+    return yahoo[keep].join(td, how="outer").sort_index()
 
 
 def fetch_historical_performance(df_clean, period="1y"):
