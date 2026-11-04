@@ -1,121 +1,176 @@
+from concurrent.futures import ThreadPoolExecutor
+
+import numpy as np
 import pandas as pd
+import streamlit as st
 import yfinance as yf
+
+# How long downloaded market data is reused before Yahoo is hit again (seconds)
+LIVE_PRICE_TTL = 300        # 5 minutes
+FUNDAMENTALS_TTL = 3600     # 1 hour
+HISTORY_TTL = 3600          # 1 hour
+
+
+def _close_prices(data, tickers):
+    """Return a DataFrame of Close prices with one column per ticker,
+    whatever column layout yfinance hands back."""
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    if isinstance(data.columns, pd.MultiIndex):
+        # Layout is either (field, ticker) or (ticker, field)
+        if "Close" in data.columns.get_level_values(0):
+            close = data["Close"]
+        else:
+            close = data.xs("Close", axis=1, level=1)
+    else:
+        close = data[["Close"]].rename(columns={"Close": tickers[0]})
+
+    if isinstance(close, pd.Series):
+        close = close.to_frame(name=tickers[0])
+    return close
+
+
+@st.cache_data(ttl=LIVE_PRICE_TTL, show_spinner="Fetching live prices...")
+def _download_latest_closes(tickers):
+    data = yf.download(list(tickers), period="5d", progress=False, threads=True)
+    close = _close_prices(data, list(tickers))
+    if close.empty:
+        return {}
+    # Forward/back-fill so mutual funds without intraday data still get a price
+    return close.ffill().bfill().iloc[-1].to_dict()
+
 
 def fetch_live_market_data(df, unique_tickers, COLUMNS_TO_DROP):
 
     if df.empty or not unique_tickers:
         return df
 
-    cost_basis_col = "Cost Basis"
-    data = yf.download(unique_tickers, period="5d", group_by="ticker")
+    latest = _download_latest_closes(tuple(sorted(unique_tickers)))
 
     # Removing Columns despite the Broker
     df_clean = df.dropna(axis=1).copy()
     existing_drop = [col for col in COLUMNS_TO_DROP if col in df_clean.columns]
-    df_clean.drop(columns=existing_drop, inplace=True, errors = "ignore")
-    live_prices = []
-    live_market_values = []
+    df_clean.drop(columns=existing_drop, inplace=True, errors="ignore")
     df_clean.reset_index(drop=True, inplace=True)
 
-    # Creating rows for updated data
-    live_prices = []
-    live_market_values = []
-    live_pnl_values = []
-    live_pnl_percents = []
+    cost_basis = df_clean["Cost Basis"]
+    qty = df_clean["Quantity"]
+    trade_value = df_clean["Trade value"]
 
-    # Updating data frame to current market structure iterating through each Asset
-    for idx, row in df_clean.iterrows():
-        ticker = row["Symbol"]
-        qty = row["Quantity"]
-        side = row["Side"]
-        cost_basis = row[cost_basis_col]
-        trade_value = row["Trade value"]
+    # Latest close per row (vectorised), falling back to cost basis if Yahoo had nothing
+    last_price = pd.to_numeric(df_clean["Symbol"].map(latest), errors="coerce")
+    last_price = last_price.fillna(cost_basis)
 
-        try:
-            if len(unique_tickers) > 1:
-                # Forward-fill/backward-fill missing daytime data for mutual funds
-                latest_close = data[ticker]["Close"].ffill().bfill().iloc[-1]
-            else:
-                latest_close = data["Close"].ffill().bfill().iloc[-1]
+    market_val = last_price * qty
+    is_long = df_clean["Side"] == "Long"
+    safe_cb = cost_basis.replace(0, np.nan)
 
-            if pd.isna(latest_close):
-                latest_close = cost_basis
-        except Exception:
-            latest_close = cost_basis
+    pnl_val = np.where(is_long, market_val - trade_value, trade_value - market_val)
+    pnl_pct = np.where(
+        is_long,
+        (last_price - cost_basis) / safe_cb * 100,
+        (cost_basis - last_price) / safe_cb * 100,
+    )
 
-        market_val = latest_close * qty
-
-        if side == "Long":
-            pnl_val = market_val - trade_value
-            pnl_pct = ((latest_close - cost_basis) / cost_basis * 100) if cost_basis != 0 else 0
-        else:
-            pnl_val = trade_value - market_val
-            pnl_pct = ((cost_basis - latest_close) / cost_basis * 100) if cost_basis != 0 else 0
-
-        live_prices.append(latest_close)
-        live_market_values.append(market_val)
-        live_pnl_values.append(pnl_val)
-        live_pnl_percents.append(pnl_pct)
-
-    df_clean["Last Price"] = live_prices
-    df_clean["Market value"] = live_market_values
-    df_clean["Unrealized PnL (value)"] = live_pnl_values
-    df_clean["Unrealized PnL %"] = live_pnl_percents
+    df_clean["Last Price"] = last_price
+    df_clean["Market value"] = market_val
+    df_clean["Unrealized PnL (value)"] = pnl_val
+    df_clean["Unrealized PnL %"] = pd.Series(pnl_pct, index=df_clean.index).fillna(0.0)
 
     return df_clean
 
-def generate_fundamental_analysis(unique_tickers):
-    # Generating Analysis data
-    analysis_rows = []
-    for ticker in unique_tickers:
-        try:
-            tick_obj = yf.Ticker(ticker)
-            info = tick_obj.info
 
-            # Type of Asset
-            quote_type = info.get("quoteType", "").upper()
+def _analyze_ticker(ticker):
+    try:
+        info = yf.Ticker(ticker).info
 
-            # Current Price
-            current_price = info.get("currentPrice", info.get("regularMarketPrice", info.get("navPrice", info.get("previousClose", "N/A"))))
+        # Type of Asset
+        quote_type = (info.get("quoteType") or "").upper()
 
-            # Extract specific metrics
-            if quote_type in ["ETF", "MUTUALFUND"]:
-                analysis_rows.append({
-                    "Symbol": ticker,
-                    "Sector": "Fund (No Sector)",
-                    "Industry": info.get("fundFamily", "ETF Fund"),
-                    "PE Ratio (trailing)": "N/A (Fund)",
-                    "Current Price": f"${current_price}",
-                    "Analyst Target Mean (1yr)": "N/A (Fund)",
-                    "Potential Upside %": "N/A (Fund)",
-                    "Recommendation": "N/A (Fund)",
-                    "Beta": info.get("beta3Year","N/A"),
-                })
-            else:
-                analysis_rows.append({
-                    "Symbol": ticker,
-                    "Sector": info.get("sector", "N/A"),
-                    "Industry": info.get("industry", "N/A"),
-                    "PE Ratio (trailing)": info.get("trailingPE", "Unprofitable"),
-                    "Current Price": f"${current_price}",
-                    "Analyst Target Mean (1yr)": f"${info.get("targetMeanPrice", "N/A"):,.2f}",
-                    "Potential Upside %": f"{(info.get("targetMeanPrice") - current_price) / current_price * 100:.2f}%",
-                    "Recommendation": info.get("recommendationKey"),
-                    "Beta": info.get("beta", "N/A"),
-                })
-        except Exception as e:
-            analysis_rows.append({
+        # Current Price
+        current_price = (
+            info.get("currentPrice")
+            or info.get("regularMarketPrice")
+            or info.get("navPrice")
+            or info.get("previousClose")
+        )
+        has_price = isinstance(current_price, (int, float)) and current_price != 0
+        price_str = f"${current_price:,.2f}" if has_price else "N/A"
+
+        if quote_type in ["ETF", "MUTUALFUND"]:
+            return {
                 "Symbol": ticker,
-                "Sector": "Error",
-                "Industry": "Error",
-                "PE Ratio (trailing)": "Error",
-                "Current Price": "Error",
-                "Analyst Target Mean (1yr)": "Error",
-                "Potential Upside %": "Error",
-                "Recommendation": "Error",
-                "Beta": "Error",
-            })
-    return pd.DataFrame(analysis_rows)
+                "Sector": "Fund (No Sector)",
+                "Industry": info.get("fundFamily", "ETF Fund"),
+                "PE Ratio (trailing)": "N/A (Fund)",
+                "Current Price": price_str,
+                "Analyst Target Mean (1yr)": "N/A (Fund)",
+                "Potential Upside %": "N/A (Fund)",
+                "Recommendation": "N/A (Fund)",
+                "Beta": info.get("beta3Year", "N/A"),
+            }
+
+        # Stocks with no analyst coverage used to crash into an "Error" row
+        target = info.get("targetMeanPrice")
+        if isinstance(target, (int, float)) and has_price:
+            target_str = f"${target:,.2f}"
+            upside_str = f"{(target - current_price) / current_price * 100:.2f}%"
+        else:
+            target_str = "N/A"
+            upside_str = "N/A"
+
+        return {
+            "Symbol": ticker,
+            "Sector": info.get("sector", "N/A"),
+            "Industry": info.get("industry", "N/A"),
+            "PE Ratio (trailing)": info.get("trailingPE", "Unprofitable"),
+            "Current Price": price_str,
+            "Analyst Target Mean (1yr)": target_str,
+            "Potential Upside %": upside_str,
+            "Recommendation": info.get("recommendationKey"),
+            "Beta": info.get("beta", "N/A"),
+        }
+    except Exception:
+        return {
+            "Symbol": ticker,
+            "Sector": "Error",
+            "Industry": "Error",
+            "PE Ratio (trailing)": "Error",
+            "Current Price": "Error",
+            "Analyst Target Mean (1yr)": "Error",
+            "Potential Upside %": "Error",
+            "Recommendation": "Error",
+            "Beta": "Error",
+        }
+
+
+@st.cache_data(ttl=FUNDAMENTALS_TTL, show_spinner="Loading fundamentals...")
+def _fundamentals(tickers):
+    # One .info request per ticker, run in parallel instead of one after another
+    with ThreadPoolExecutor(max_workers=min(8, len(tickers))) as pool:
+        rows = list(pool.map(_analyze_ticker, tickers))
+    df = pd.DataFrame(rows)
+    # Mixed text/number columns make Streamlit's table conversion slow and noisy
+    for col in ["PE Ratio (trailing)", "Beta"]:
+        df[col] = df[col].astype(str)
+    return df
+
+
+def generate_fundamental_analysis(unique_tickers):
+    if not unique_tickers:
+        return pd.DataFrame()
+    return _fundamentals(tuple(unique_tickers))
+
+
+@st.cache_data(ttl=HISTORY_TTL, show_spinner="Loading price history...")
+def _download_history(tickers, period):
+    # Portfolio tickers and the S&P 500 in a single request
+    all_tickers = list(tickers) + ["^GSPC"]
+    data = yf.download(all_tickers, period=period, auto_adjust=True, progress=False, threads=True)
+    return _close_prices(data, all_tickers)
+
+
 def fetch_historical_performance(df_clean, period="1y"):
 
     if df_clean.empty:
@@ -127,88 +182,32 @@ def fetch_historical_performance(df_clean, period="1y"):
     if total_market_value <= 0:
         return pd.DataFrame()
 
-    # Calculate current portfolio weights
-    df_weights = df_clean[["Symbol", "Market value"]].copy()
+    # Current portfolio weights (summed in case a ticker appears on two rows)
+    weights = df_clean.groupby("Symbol")["Market value"].sum() / total_market_value
 
-    df_weights["Weight"] = (
-        df_weights["Market value"] / total_market_value
-    )
-
-    # Get unique tickers
-    tickers = df_weights["Symbol"].dropna().unique().tolist()
-
+    tickers = sorted(weights.index.dropna().unique().tolist())
     if not tickers:
         return pd.DataFrame()
 
-    # Download historical prices
-    price_data = yf.download(
-        tickers,
-        period=period,
-        auto_adjust=True,
-        progress=False
-    )["Close"]
+    close = _download_history(tuple(tickers), period)
+    if close.empty or "^GSPC" not in close.columns:
+        return pd.DataFrame()
 
-    # Make sure price_data is always a DataFrame
-    if isinstance(price_data, pd.Series):
-        price_data = price_data.to_frame()
-
-    # Remove tickers that did not return historical data
-    valid_tickers = [
-        ticker for ticker in tickers
-        if ticker in price_data.columns
-    ]
-
+    valid_tickers = [t for t in tickers if t in close.columns and close[t].notna().any()]
     if not valid_tickers:
         return pd.DataFrame()
 
-    price_data = price_data[valid_tickers].ffill().bfill()
+    price_data = close[valid_tickers].ffill().bfill()
 
-    # Normalize each security to 100 at the beginning
+    # Normalize each security to 100 at the beginning, then weight (vectorised)
     normalized_prices = price_data / price_data.iloc[0] * 100
+    portfolio_performance = normalized_prices.mul(weights[valid_tickers], axis=1).sum(axis=1)
 
-    # Calculate weighted portfolio performance
-    portfolio_performance = pd.Series(
-        0.0,
-        index=normalized_prices.index
-    )
+    sp500 = close["^GSPC"].ffill().bfill()
+    sp500_performance = sp500 / sp500.iloc[0] * 100
 
-    for ticker in valid_tickers:
-
-        weight = df_weights.loc[
-            df_weights["Symbol"] == ticker,
-            "Weight"
-        ].iloc[0]
-
-        portfolio_performance += (
-            normalized_prices[ticker] * weight
-        )
-
-    # Download S&P 500
-    sp500_data = yf.download(
-        "^GSPC",
-        period=period,
-        auto_adjust=True,
-        progress=False
-    )["Close"]
-
-    # Convert to Series if necessary
-    if isinstance(sp500_data, pd.DataFrame):
-        sp500_data = sp500_data.squeeze()
-
-    sp500_data = sp500_data.ffill().bfill()
-
-    # Normalize S&P 500 to 100
-    sp500_performance = (
-        sp500_data / sp500_data.iloc[0] * 100
-    )
-
-    # Put both series into one DataFrame
-    df_performance = pd.DataFrame({
+    return pd.DataFrame({
         "Date": portfolio_performance.index,
         "Portfolio": portfolio_performance.values,
-        "S&P 500": sp500_performance.reindex(
-            portfolio_performance.index
-        ).values
+        "S&P 500": sp500_performance.reindex(portfolio_performance.index).values,
     })
-
-    return df_performance
