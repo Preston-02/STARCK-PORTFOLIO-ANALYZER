@@ -1,5 +1,8 @@
+import io
+
 import streamlit as st
 import pandas as pd
+from PIL import Image
 
 # Import Python Files
 from charts import (
@@ -16,9 +19,11 @@ from market_data import (
 )
 from portfolio_utils import COLUMNS_TO_DROP, color_negative_red
 
+LOGO_PATH = "assets/starck_logo.png"
+
 st.set_page_config(
     page_title="STARCK",
-    page_icon="assets/starck_logo.png",
+    page_icon=LOGO_PATH,
     layout= "wide"
 )
 
@@ -35,7 +40,61 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.image("assets/starck_logo.png", width=250)
+
+@st.cache_resource
+def load_logo():
+    # The logo file is 1.2 MB; shrink it once instead of sending it on every rerun
+    img = Image.open(LOGO_PATH)
+    img.thumbnail((500, 500))
+    return img
+
+
+@st.cache_data(show_spinner="Reading positions...")
+def load_positions(file_bytes, choice):
+    # Cached on the file's contents, so the CSV is only parsed once per upload
+    return clean_data(io.BytesIO(file_bytes), choice)
+
+
+@st.fragment
+def performance_section(df_clean):
+    # Runs as a fragment: changing the period reruns only this block, not the whole page
+    st.subheader("Portfolio Performance")
+
+    performance_period = st.selectbox(
+        "Performance Period",
+        ["1 Year", "3 Years", "5 Years"]
+    )
+
+    period_map = {
+        "1 Year": "1y",
+        "3 Years": "3y",
+        "5 Years": "5y"
+    }
+
+    df_performance = fetch_historical_performance(
+        df_clean,
+        period=period_map[performance_period]
+    )
+
+    if not df_performance.empty:
+        performance_fig = portfolio_vs_sp500_chart(df_performance)
+
+        st.plotly_chart(
+            performance_fig,
+            use_container_width=True
+        )
+
+        st.caption(
+            "Hypothetical performance based on current portfolio weights. "
+            "This does not represent actual historical portfolio returns."
+        )
+    else:
+        st.warning(
+            "Historical performance data could not be calculated."
+        )
+
+
+st.image(load_logo(), width=250)
 
 st.title("STARCK-Portfolio Analyzer")
 
@@ -50,7 +109,7 @@ if positions is not None:
         st.write("Please select your brokerage...")
     else:
         try:
-            df = clean_data(positions, choice)
+            df = load_positions(positions.getvalue(), choice)
 
             # Validate that the cleaned dataframe has the required columns
             expected_columns = ["Symbol", "Market value", "Trade value", "Unrealized PnL (value)"]
@@ -73,7 +132,7 @@ if positions is not None:
             st.error(f"Could not read this file. Please ensure it is a valid {choice} CSV export.")
             st.stop()
 
-        # Downloading current data
+        # Downloading current data (cached, so reruns don't hit Yahoo again)
         unique_tickers = df["Symbol"].unique().tolist()
         df_clean = fetch_live_market_data(df, unique_tickers, COLUMNS_TO_DROP)
         df_analysis = generate_fundamental_analysis(unique_tickers)
@@ -126,44 +185,7 @@ if positions is not None:
         st.divider()
 
         # Portfolio Performance vs. S&P 500
-        st.subheader("Portfolio Performance")
-
-        performance_period = st.selectbox(
-            "Performance Period",
-            ["1 Year", "3 Years", "5 Years"]
-        )
-
-        period_map = {
-            "1 Year": "1y",
-            "3 Years": "3y",
-            "5 Years": "5y"
-        }
-
-        selected_period = period_map[performance_period]
-
-        df_performance = fetch_historical_performance(
-            df_clean,
-            period=selected_period
-        )
-
-        if not df_performance.empty:
-            performance_fig = portfolio_vs_sp500_chart(
-                df_performance
-            )
-
-            st.plotly_chart(
-                performance_fig,
-                use_container_width=True
-            )
-
-            st.caption(
-                "Hypothetical performance based on current portfolio weights. "
-                "This does not represent actual historical portfolio returns."
-            )
-        else:
-            st.warning(
-                "Historical performance data could not be calculated."
-            )
+        performance_section(df_clean)
 
         st.divider()
 
@@ -194,10 +216,10 @@ if positions is not None:
 
         # Displaying Positions from csv file
         st.subheader("Positions")
-        st.write(styled_df)
+        st.dataframe(styled_df)
 
         # Displaying Analysis of each stock
         st.subheader("Stock Analysis")
-        st.write(df_analysis)
+        st.dataframe(df_analysis)
 else:
     st.write("Positions CSV file not uploaded!")
